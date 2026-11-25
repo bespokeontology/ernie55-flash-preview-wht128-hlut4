@@ -1,0 +1,575 @@
+// SPDX-License-Identifier: Apache-2.0
+#pragma once
+// Pure gfx906 HIP Zero-Scratch (ScratchSize == 0, 0 trig, 0 spills, 0 slc) Core Architectural Kernels
+// for baidu/ERNIE-5.5-Flash (ernie5_5_moe):
+//   - mHC (4-stream Manifold-Constrained Hyper-Connections, 1/(sqrt(mean)+eps), 20-iter Sinkhorn, hc_head)
+//   - HCA (37 layers: 128:1 block compressor + 128-SWA, 512-d heads, YaRN RoPE, QK-norm, VHA, inv-RoPE, LRGA)
+//   - mqa_dsa (6 backbone + 1 ECHO: Lightning Indexer NeoX RoPE + WHT128 + top-2048 + 128-SWA + Absorbed MLA + VHA + LRGA)
+//   - Multi-Router Latent MoE (split-feature dual-sigmoid top-10 + bias + learnable per-expert scale)
+//   - ECHO (L43 multi-horizon drafter) + MultiMax (exact FP32 piecewise output head)
+
+#include "../src/ernie55_config.hpp"
+#include <hip/hip_runtime.h>
+#include <cstdint>
+
+namespace ernie55 {
+
+// 2D Factored RoPE Table: pos = hi*1024 + lo -> 0 device trig across full 1,048,576 context (~512 KiB/table!)
+struct Rope2DTableGpu {
+    float* d_cos_hi = nullptr;  // [1024, 32]
+    float* d_sin_hi = nullptr;  // [1024, 32]
+    float* d_cos_lo = nullptr;  // [1024, 32]
+    float* d_sin_lo = nullptr;  // [1024, 32]
+};
+
+// ---- Basic Primitives ----
+void launch_embed_lookup_bf16(const uint16_t* d_embed_bf16, const int32_t* d_tok_ids,
+                              uint16_t* d_out_bf16, int M, int H, hipStream_t stream);
+void launch_rmsnorm_bf16(const uint16_t* d_in_bf16, const uint16_t* d_w_bf16,
+                         uint16_t* d_out_bf16, int M, int D, float eps, hipStream_t stream);
+void launch_rmsnorm_f32_to_bf16(const float* d_in_f32, const uint16_t* d_w_bf16,
+                                uint16_t* d_out_bf16, int M, int D, float eps, hipStream_t stream);
+void launch_add_bf16_inplace(uint16_t* d_dst_bf16, const uint16_t* d_src_bf16, int total, hipStream_t stream);
+void launch_sigmoid_mul_bf16(uint16_t* d_x_bf16, const uint16_t* d_gate_bf16, int total, hipStream_t stream);
+void launch_argmax_f32(const float* d_logits, int32_t* d_out_id, int V, hipStream_t stream);
+void launch_argmax_f32_fast(const float* d_logits, float* d_part_vals64, int32_t* d_part_idx64,
+                            int32_t* d_out_id, int V, hipStream_t stream);
+
+// ---- mHC (Manifold-Constrained Hyper-Connections, hc_mult=4, sinkhorn=20) ----
+void launch_mhc_pre_broadcast_norm(
+    const uint16_t* d_embed_bf16,   // [M, 4096]
+    const float* d_fn_24x16384,     // [24, 16384] (transposed ckpt mapping_proj)
+    const float* d_hc_scale3,       // [3]
+    const float* d_hc_base24,       // [24]
+    const uint16_t* d_norm_w_bf16,  // [4096]
+    uint16_t* d_res_out_bf16,       // [M, 4, 4096]
+    float* d_post_mix,              // [M, 4]
+    float* d_comb_mix,              // [M, 16]
+    uint16_t* d_layer_in_bf16,      // [M, 4096]
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+void launch_mhc_pre_norm(
+    const uint16_t* d_res_bf16,     // [M, 4, 4096]
+    const float* d_fn_24x16384,     // [24, 16384]
+    const float* d_hc_scale3,       // [3]
+    const float* d_hc_base24,       // [24]
+    const uint16_t* d_norm_w_bf16,  // [4096] (may be nullptr)
+    float* d_post_mix,              // [M, 4]
+    float* d_comb_mix,              // [M, 16]
+    uint16_t* d_layer_in_bf16,      // [M, 4096]
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+// Multi-CU 4-way split-K weight-stationary mHC pre-norm for decode/verify (M <= 8, 96 blocks!)
+void launch_mhc_pre_norm_fast(
+    const uint16_t* d_res_bf16,     // [M, 4, 4096]
+    const float* d_fn_24x16384,     // [24, 16384]
+    const float* d_hc_scale3,       // [3]
+    const float* d_hc_base24,       // [24]
+    const uint16_t* d_norm_w_bf16,  // [4096] (may be nullptr)
+    float* d_mhc_ws,                // [M, 25, 4] F32 split-K workspace (<= 3.2 KiB for M<=8)
+    float* d_post_mix,              // [M, 4]
+    float* d_comb_mix,              // [M, 16]
+    uint16_t* d_layer_in_bf16,      // [M, 4096]
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+// Prefill mHC Sinkhorn + collapse + RMSNorm consuming pre-computed rocblas_sgemm mixes [M, 24]
+void launch_mhc_pre_sinkhorn_from_mixes(
+    const uint16_t* d_res_bf16,     // [M, 4, 4096]
+    const float* d_raw_mixes_Mx24,  // [M, 24] = res_f32 @ fn^T
+    const float* d_hc_scale3,       // [3]
+    const float* d_hc_base24,       // [24]
+    const uint16_t* d_norm_w_bf16,  // [4096] (may be nullptr)
+    float* d_post_mix,              // [M, 4]
+    float* d_comb_mix,              // [M, 16]
+    uint16_t* d_layer_in_bf16,      // [M, 4096]
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+void launch_mhc_post_update(
+    const uint16_t* d_sublayer_bf16, // [M, 4096]
+    const uint16_t* d_res_in_bf16,   // [M, 4, 4096]
+    const float* d_post_mix,         // [M, 4]
+    const float* d_comb_mix,         // [M, 16] (einsum ij,ih->jh!)
+    uint16_t* d_res_out_bf16,        // [M, 4, 4096]
+    int M, int H, hipStream_t stream);
+
+void launch_mhc_head_contract(
+    const uint16_t* d_res_bf16,      // [M, 4, 4096]
+    const float* d_hc_head_fn,       // [4, 16384]
+    const float* d_hc_head_scale,    // [1]
+    const float* d_hc_head_base,     // [4]
+    const uint16_t* d_final_norm_w,  // [4096]
+    uint16_t* d_out_bf16,            // [M, 4096]
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+// ---- HCA (37 Layers: 128:1 Compressor + 128-SWA, 512-d, YaRN RoPE, QK-Norm, VHA, inv-RoPE, LRGA) ----
+void launch_hca_q_qknorm_rope(
+    uint16_t* d_q_bf16,              // [M, n_heads, 512] in-place weightless RMSNorm + interleaved YaRN RoPE [448..511]
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    int M, int n_heads, float eps, hipStream_t stream);
+
+void launch_hca_kv_rope_swa_insert(
+    const uint16_t* d_kv_normed_bf16, // [M, 512]
+    const int32_t* d_pos_ids,         // [M]
+    const Rope2DTableGpu& rope,
+    uint16_t* d_swa_ring_bf16,        // [128, 512] ring buffer indexed by pos % 128
+    int M, hipStream_t stream);
+
+void launch_hca_compressor_save_state(
+    const float* d_wkv_f32,          // [M, 512]
+    const float* d_wgate_f32,        // [M, 512]
+    const float* d_ape_128x512,      // [128, 512]
+    const int32_t* d_pos_ids,        // [M]
+    float* d_state_kv,               // [128, 512] current block buffer
+    float* d_state_score,            // [128, 512] current block buffer
+    int M, hipStream_t stream);
+
+void launch_hca_compressor_reduce_norm_rope(
+    const float* d_state_kv,         // [128, 512]
+    const float* d_state_score,      // [128, 512]
+    const uint16_t* d_comp_norm_w,   // [512]
+    const Rope2DTableGpu& rope,
+    int32_t compressed_pos,          // (pos / 128) * 128 = block_idx * 128!
+    uint16_t* d_comp_kv_dst_bf16,    // [512] destination row in compressed KV cache!
+    float eps, hipStream_t stream);
+
+void launch_hca_attn_c128_swa_sink(
+    const uint16_t* d_q_bf16,        // [n_heads, 512] single token decode/step query
+    const uint16_t* d_comp_kv_bf16,  // [num_comp, 512] compressed KV cache
+    const uint16_t* d_swa_ring_bf16, // [256, 512] SWA ring (indexed pos & 255)
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_out_bf16,            // [n_heads, 512]
+    int n_heads, int32_t pos, int num_comp, hipStream_t stream);
+
+void launch_hca_attn_c128_swa_sink_batch(
+    const uint16_t* d_q_bf16,        // [M, n_heads, 512] M<=8 sub-chunk without crossing 128-boundary
+    const uint16_t* d_comp_kv_bf16,  // [num_comp, 512] compressed KV cache
+    const uint16_t* d_swa_ring_bf16, // [256, 512] SWA ring (already populated with pos0..pos0+M-1)
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_out_bf16,            // [M, n_heads, 512]
+    int n_heads, int32_t pos0, int M, int num_comp, hipStream_t stream);
+
+// ---- Batched HCA Prefill Kernels (M up to 4096 in 1 launch, 100% bit-exact with decode!) ----
+void launch_hca_kv_rope_inplace(
+    uint16_t* d_kv_chunk_bf16,       // [M, 512] in-place YaRN RoPE [448..511]
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    int M, hipStream_t stream);
+
+void launch_hca_prefill_compress_blocks(
+    const float* d_wkv_chunk_f32,    // [M, 512]
+    const float* d_wgate_chunk_f32,  // [M, 512]
+    const float* d_ape_128x512,      // [128, 512]
+    const float* d_prev_state_kv,    // [128, 512] (for partial block straddling pos0)
+    const float* d_prev_state_sc,    // [128, 512]
+    const uint16_t* d_comp_norm_w,   // [512]
+    const Rope2DTableGpu& rope,
+    int32_t pos0, int M,
+    uint16_t* d_comp_kv_cache_bf16,  // [max_kv/128, 512]
+    float eps, hipStream_t stream);
+
+void launch_hca_prefill_attn_c128_swa_sink(
+    const uint16_t* d_q_bf16,        // [M, n_heads, 512]
+    const uint16_t* d_comp_kv_bf16,  // [max_kv/128, 512]
+    const uint16_t* d_swa_ring_bf16, // [128, 512] pre-chunk SWA state (< pos0)
+    const uint16_t* d_kv_chunk_rot,  // [M, 512] rotated chunk KV (>= pos0)
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_out_bf16,            // [M, n_heads, 512]
+    int n_heads, int32_t pos0, int M, hipStream_t stream);
+
+void launch_hca_prefill_commit_tail(
+    const uint16_t* d_kv_chunk_rot,  // [M, 512]
+    const float* d_wkv_chunk_f32,    // [M, 512]
+    const float* d_wgate_chunk_f32,  // [M, 512]
+    const float* d_ape_128x512,      // [128, 512]
+    int32_t pos0, int M,
+    uint16_t* d_swa_ring_bf16,       // [128, 512] updated with tail <= 128
+    float* d_state_kv,               // [128, 512] updated with unfinished block tail
+    float* d_state_sc,               // [128, 512]
+    hipStream_t stream);
+
+// ---- Batched DSA Prefill Kernels (M tokens in 1 launch, zero per-token host sync!) ----
+void launch_dsa_prefill_kv_norm_rope_append(
+    uint16_t* d_q_bf16,              // [M, n_heads, 256] interleaved RoPE [192..255]
+    const uint16_t* d_kv_a_raw_576,  // [M, 576] = [512 kv_c_raw | 64 k_pe_raw]
+    const uint16_t* d_kv_a_norm_w,   // [512]
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    uint16_t* d_mla_kv_cache_bf16,   // [max_kv, 576]
+    int M, int n_heads, int max_kv, float eps, hipStream_t stream);
+
+void launch_dsa_prefill_mla_dense_causal_sink(
+    const uint16_t* d_q_abs_bf16,    // [M, n_heads, 576]
+    const uint16_t* d_mla_kv_bf16,   // [max_kv, 576]
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_o_lat_bf16,          // [M, n_heads, 512]
+    int n_heads, int32_t pos0, int M, hipStream_t stream);
+
+void launch_dsa_prefill_mla_sparse_batch(
+    const uint16_t* d_q_abs_bf16,    // [M, n_heads, 576]
+    const uint16_t* d_mla_kv_bf16,   // [max_kv, 576]
+    const int32_t* d_sel_indices_MxS,// [M, stride_sel]
+    const int32_t* d_sel_counts,     // [M]
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_o_lat_bf16,          // [M, n_heads, 512]
+    int n_heads, int M, int stride_sel, hipStream_t stream);
+
+void launch_hca_vha_invrope(
+    const uint16_t* d_o_in_bf16,     // [M, 64, 512]
+    const float* d_vha_m_64x64,      // [64, 64] = I + V @ U^T
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    uint16_t* d_o_out_bf16,          // [M, 64, 512]
+    int M, hipStream_t stream);
+
+void launch_hca_grouped_wo_a_lrga(
+    const uint16_t* d_o_bf16,        // [M, 8, 4096] (64 heads grouped as 8 x 8x512)
+    const uint16_t* d_wo_a_bf16,     // [8, 1024, 4096]
+    const uint16_t* d_gate_bf16,     // [M, 8192] raw o_gate(qr) logits
+    uint16_t* d_z_out_bf16,          // [M, 8192] = wo_a(o) * sigmoid(gate)
+    int M, int n_groups, int o_lora_rank, hipStream_t stream);
+
+// ---- mqa_dsa (6 Backbone + 1 ECHO: Lightning Indexer + Absorbed Sparse MLA + VHA + LRGA) ----
+void launch_dsa_indexer_prep_neox_wht128(
+    uint16_t* d_iq_bf16,             // [M, 64, 128] in-place NeoX RoPE [0..63] + WHT128
+    const uint16_t* d_ik_raw_bf16,   // [M, 128]
+    const uint16_t* d_knorm_w,       // [128] LayerNorm weight
+    const uint16_t* d_knorm_b,       // [128] LayerNorm bias
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    uint16_t* d_ik_cache_bf16,       // [max_kv, 128] destination cache
+    int M, int max_kv, hipStream_t stream);
+
+void launch_dsa_indexer_score_tokens(
+    const uint16_t* d_iq_bf16,       // [64, 128]
+    const uint16_t* d_iw_bf16,       // [64] raw weights_proj(x)
+    const uint16_t* d_ik_cache_bf16, // [n_hist, 128]
+    float* d_scores_f32,             // [n_hist]
+    int n_hist, hipStream_t stream);
+
+void launch_dsa_mla_rope_kv_append(
+    uint16_t* d_q_bf16,              // [M, n_heads, 256] interleaved RoPE on [192..255]
+    const uint16_t* d_kv_c_norm_bf16,// [M, 512]
+    const uint16_t* d_k_pe_bf16,     // [M, 64]
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    uint16_t* d_mla_kv_cache_bf16,   // [max_kv, 576] = [512 kv_c | 64 k_pe_rot]
+    int M, int n_heads, int max_kv, hipStream_t stream);
+
+void launch_dsa_mla_absorbed_sparse_sink(
+    const uint16_t* d_q_abs_bf16,    // [n_heads, 576] = [512 q_nope@W_UK | 64 q_rope]
+    const uint16_t* d_mla_kv_bf16,   // [max_kv, 576]
+    const int32_t* d_sel_indices,    // [n_sel] (<= 2176)
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_o_lat_bf16,          // [n_heads, 512]
+    int n_heads, int n_sel, hipStream_t stream);
+
+void launch_dsa_q_absorb_uk(
+    const uint16_t* d_q_bf16,        // [M, 64, 256] (192 nope + 64 rope)
+    const uint16_t* d_kv_b_bf16,     // [64, 448, 512] (first 192 rows = W_UK, next 256 rows = W_UV)
+    uint16_t* d_q_abs_bf16,          // [M, 64, 576] ([512 absorbed | 64 rope])
+    int M, int n_heads, hipStream_t stream);
+
+void launch_dsa_o_project_uv(
+    const uint16_t* d_o_lat_bf16,    // [M, 64, 512]
+    const uint16_t* d_kv_b_bf16,     // [64, 448, 512]
+    uint16_t* d_o_v_bf16,            // [M, 64, 256]
+    int M, int n_heads, hipStream_t stream);
+
+void launch_f32_to_bf16(const float* d_in_f32, uint16_t* d_out_bf16, int total, hipStream_t stream);
+void launch_bf16_to_f32(const uint16_t* d_in_bf16, float* d_out_f32, int total, hipStream_t stream);
+void launch_f32_add_inplace(float* d_dst_f32, const float* d_src_f32, int total, hipStream_t stream);
+void launch_f32_mul_sigmoid_to_bf16(const float* d_z_f32, const uint16_t* d_gate_bf16, uint16_t* d_out_bf16, int total, hipStream_t stream);
+void launch_dsa_copy_qrope_bf16(const uint16_t* d_q_bf16, uint16_t* d_q_abs_bf16, int M, int n_heads, hipStream_t stream);
+
+void launch_dsa_gather_kv_f32(
+    const uint16_t* d_mla_kv_bf16, const int32_t* d_sel_indices_BxS,
+    const int32_t* d_sel_counts, float* d_k_sel_f32,
+    int B, int stride_sel, hipStream_t stream);
+
+void launch_dsa_scores_softmax_sink_f32(
+    float* d_scores_BxHxL, const float* d_attn_sink,
+    const int32_t* d_sel_counts_or_null,
+    int B, int n_heads, int L, int32_t pos0_causal, float scale, hipStream_t stream);
+
+void launch_dsa_vha_lrga(
+    const uint16_t* d_o_in_bf16,     // [M, 64, 256]
+    const float* d_vha_m_64x64,      // [64, 64]
+    const uint16_t* d_gate_bf16,     // [M, 16384]
+    uint16_t* d_out_bf16,            // [M, 16384]
+    int M, hipStream_t stream);
+
+// ---- Multi-Router Split-Feature Sigmoid Top-10 Routing ----
+void launch_split_sigmoid_top10_route(
+    const float* d_logits_2E,        // [M, 1024] = [l0 (512) | l1 (512)]
+    const float* d_corr_bias,        // [512]
+    const float* d_scale_param,      // [512]
+    int32_t* d_topk_ids,             // [M, 10]
+    float* d_topk_weights,           // [M, 10]
+    int M, hipStream_t stream,
+    int max_expert = 512);
+
+// ---- ECHO (L43) Fusion & MultiMax Output Head ----
+void launch_echo_fuse_he(
+    const uint16_t* d_hproj_4xH,     // [M, 4, 4096]
+    const uint16_t* d_eproj_H,       // [M, 4096]
+    uint16_t* d_out_4xH,             // [M, 4, 4096]
+    int M, int H, hipStream_t stream);
+
+void launch_multimax_inplace_f32(
+    float* d_logits_f32,             // [M, V] updated in-place in exact IEEE order
+    const float* d_ranges4,          // [4]
+    const float* d_ts4,              // [4]
+    int M, int V, hipStream_t stream);
+
+// ---- ERNIE-5.5-Flash-Preview: FlashIndexer (Top-8 of 64 DSA Heads) & 3L MoE DSpark ----
+void launch_flashindexer_select_heads(
+    const float* d_gate_logits_f32,  // [M, 64] = x_in @ linear_gate.weight^T
+    const float* d_bias_f32,         // [64] flashindexer_bias
+    const uint16_t* d_iq_bf16,       // [M, 64, 128]
+    const uint16_t* d_iw_bf16,       // [M, 64]
+    uint16_t* d_q_sel_bf16,          // [M, 8, 128]
+    float* d_w_sel_f32,              // [M, 8]
+    int M, hipStream_t stream);
+
+void launch_dsa_indexer_score_topk8(
+    const uint16_t* d_q_sel_bf16,    // [8, 128]
+    const float* d_w_sel_f32,        // [8]
+    const uint16_t* d_ik_cache_bf16, // [n_hist, 128]
+    float* d_scores_f32,             // [n_hist]
+    int n_hist, hipStream_t stream);
+
+void launch_dsa_indexer_score_topk8_batch(
+    const uint16_t* d_q_sel_bf16,    // [M, 8, 128]
+    const float* d_w_sel_f32,        // [M, 8]
+    const uint16_t* d_ik_cache_bf16, // [max_kv, 128]
+    float* d_scores_batch_f32,       // [B_sc, score_stride]
+    int32_t pos0, int t0, int B_sc, int score_stride, hipStream_t stream);
+
+void launch_dsa_indexer_score_full_batch(
+    const uint16_t* d_iq_bf16,       // [M, 64, 128]
+    const uint16_t* d_iw_bf16,       // [M, 64]
+    const uint16_t* d_ik_cache_bf16, // [max_kv, 128]
+    float* d_scores_batch_f32,       // [B_sc, score_stride]
+    int32_t pos0, int t0, int B_sc, int score_stride, hipStream_t stream);
+
+void launch_dsa_select_topk2048_gpu(
+    const float* d_scores_batch_f32, // [B_sc, score_stride]
+    int32_t* d_sel_idx_MxS,          // [M, stride_sel]
+    int32_t* d_sel_cnts,             // [M]
+    int32_t pos0, int t0, int B_sc, int score_stride, int stride_sel, hipStream_t stream);
+
+// Wave-6 Zero-Scratch LDS Q-Stationary Multi-Row FlashIndexer & 32-Block VGPR Zero-Skip Top-2048 Selector
+void launch_dsa_indexer_score_topk8_wave6(
+    const uint16_t* d_q_sel_bf16,    // [M, 8, 128]
+    const float* d_w_sel_f32,        // [M, 8]
+    const uint16_t* d_ik_cache_bf16, // [max_kv, 128]
+    float* d_scores_batch_f32,       // [B_sc, score_stride]
+    int32_t pos0, int t0, int B_sc, int score_stride, hipStream_t stream);
+
+// Wave-7 4-Lane VALU DPP FlashIndexer (0 ds_bpermute, 0 bit-diffs vs d_warp_sum64, LDS Q-stationary)
+void launch_dsa_indexer_score_topk8_dpp4(
+    const uint16_t* d_q_sel_bf16,    // [M, 8, 128]
+    const float* d_w_sel_f32,        // [M, 8]
+    const uint16_t* d_ik_cache_bf16, // [max_kv, 128]
+    float* d_scores_batch_f32,       // [B_sc, score_stride]
+    int32_t pos0, int t0, int B_sc, int score_stride, hipStream_t stream);
+
+// Wave-7 Split-K 4-Head HCA Compressed-KV + SWA Decode (M<=8, 60-CU saturation, 0 B new VRAM, M=1==M=6 bit-identical!)
+void launch_hca_attn_c128_swa_sink_splitk(
+    const uint16_t* d_q_bf16,        // [M, n_heads, 512]
+    const uint16_t* d_comp_kv_bf16,  // [num_comp, 512]
+    const uint16_t* d_swa_ring_bf16, // [256, 512]
+    const float* d_attn_sink,        // [n_heads]
+    float* d_part_o_f32,             // existing w.d_hca_o_tot_f32 (>= (S+1)*M*n_heads*512 floats)
+    float* d_part_ml_f32,            // existing w.d_hca_ml_f32    (>= (S+1)*M*n_heads*2 floats)
+    uint16_t* d_out_bf16,            // [M, n_heads, 512]
+    int n_heads, int32_t pos0, int M, int num_comp, hipStream_t stream);
+
+void launch_dsa_select_topk2048_wave6(
+    const float* d_scores_batch_f32, // [B_sc, score_stride]
+    uint32_t* d_scratch_u32,         // >= 5.01 MiB inside existing g_own.d_y_f32 (0 B new VRAM!)
+    int32_t* d_sel_idx_MxS,          // [M, stride_sel]
+    int32_t* d_sel_cnts,             // [M]
+    int32_t pos0, int t0, int B_sc, int score_stride, int stride_sel, hipStream_t stream);
+
+void launch_mhc_mean4_bf16(
+    const uint16_t* d_res_4xH,       // [M, 4, 4096]
+    uint16_t* d_out_H,               // [M, 4096] = mean across 4 mHC streams
+    int M, int H, hipStream_t stream);
+
+void launch_dspark_swa_ring_write(
+    const uint16_t* d_kv_norm_bf16,  // [M, 512] already kv_norm'd
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,      // plain RoPE at rope_theta=8,000,000!
+    uint16_t* d_swa_ring_256,        // [256, 512] indexed by pos & 255
+    int M, hipStream_t stream);
+
+void launch_dspark_swa_noncausal_block_attn(
+    const uint16_t* d_q_bf16,        // [K, 64, 512] (already QK-norm + plain RoPE!)
+    const uint16_t* d_swa_ring_256,  // [256, 512] (context [0..query_pos0-1] + K block queries)
+    const float* d_attn_sink,        // [64]
+    uint16_t* d_out_bf16,            // [K, 64, 512]
+    int32_t query_pos0, int K, int sliding_window, hipStream_t stream);
+
+void launch_dspark_add_bias_multimax_f32(
+    const float* d_base_logits_f32,  // [V]
+    const float* d_bias_f32,         // [V]
+    const float* d_ranges4,          // [4] (nullable -> skip multimax)
+    const float* d_ts4,              // [4]
+    float* d_out_logits_f32,         // [V]
+    int V, hipStream_t stream);
+
+// ---- TP4 Sharded Rank-Major VHA + Batched GEMM FlashIndexer + Batched GEMM HCA Comp/SWA + FP16 DSA ----
+void launch_hca_vha_invrope_shard(
+    const uint16_t* d_o_in_rm_bf16,  // [tp_size, M, h_loc, 512] rank-major contiguous (0 memcpy2D!)
+    const float* d_vha_m_64x64,      // [64, 64]
+    const int32_t* d_pos_ids,        // [M]
+    const Rope2DTableGpu& rope,
+    uint16_t* d_o_out_bf16,          // [M, n_local_heads, 512]
+    int M, int tp_size, int head_begin, int n_local_heads, hipStream_t stream);
+
+void launch_dsa_vha_lrga_shard(
+    const uint16_t* d_o_in_rm_bf16,  // [tp_size, M, h_loc, 256] rank-major contiguous (0 memcpy2D!)
+    const float* d_vha_m_64x64,      // [64, 64]
+    const uint16_t* d_gate_bf16,     // [M, n_local_heads * 256]
+    uint16_t* d_out_bf16,            // [M, n_local_heads * 256]
+    int M, int tp_size, int head_begin, int n_local_heads, hipStream_t stream);
+
+void launch_hca_gather_swa_kv_f16(
+    const uint16_t* d_swa_ring_bf16, // [256, 512]
+    const uint16_t* d_kv_chunk_rot,  // [M, 512]
+    uint16_t* d_k_swa_f16,           // [swa_pad, 512]
+    int32_t pos0, int M, int32_t swa_lo, int swa_pad, hipStream_t stream);
+
+void launch_hca_swa_softmax_f32(
+    const float* d_scores_f32,       // [M * n_heads, swa_pad]
+    float* d_m_swa_f32,              // [M * n_heads]
+    float* d_l_swa_f32,              // [M * n_heads]
+    uint16_t* d_probs_f16,           // [M * n_heads, swa_pad]
+    int M, int n_heads, int32_t pos0, int32_t swa_lo, int swa_pad, hipStream_t stream);
+
+void launch_hca_merge_comp_swa_sink_bf16(
+    const float* d_comp_o_f32,       // [M * n_heads, 512] (ignored if !has_comp)
+    const float* d_comp_m_f32,       // [M * n_heads]
+    const float* d_comp_l_f32,       // [M * n_heads]
+    const float* d_swa_o_f32,        // [M * n_heads, 512]
+    const float* d_swa_m_f32,        // [M * n_heads]
+    const float* d_swa_l_f32,        // [M * n_heads]
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_out_bf16,            // [M, n_heads, 512]
+    int M, int n_heads, bool has_comp, hipStream_t stream);
+
+void launch_flashindexer_relu_wsum_f32(
+    const float* d_dots_f32,         // [B_sc * 8, k_cnt]
+    const float* d_w_sel_f32,        // [M, 8]
+    float* d_scores_batch_f32,       // [B_sc, score_stride]
+    int32_t pos0, int t0, int B_sc, int k0, int k_cnt, int score_stride, hipStream_t stream);
+
+void launch_hca_comp_softmax_f32(
+    const float* d_scores_f32,       // [M * n_heads, blk_cnt]
+    float* d_m_blk_f32,              // [M * n_heads]
+    float* d_l_blk_f32,              // [M * n_heads]
+    uint16_t* d_probs_f16,           // [M * n_heads, blk_cnt]
+    int M, int n_heads, int32_t pos0, int blk0, int blk_cnt, hipStream_t stream);
+
+void launch_hca_comp_merge_tile_f32(
+    float* d_o_tot_f32, float* d_m_tot_f32, float* d_l_tot_f32,
+    const float* d_o_blk_f32, const float* d_m_blk_f32, const float* d_l_blk_f32,
+    int n_rows, bool first_tile, hipStream_t stream);
+
+void launch_hca_prefill_swa_merge_sink(
+    const uint16_t* d_q_bf16,        // [M, n_heads, 512]
+    const uint16_t* d_swa_ring_bf16, // [256, 512]
+    const uint16_t* d_kv_chunk_rot,  // [M, 512]
+    const float* d_comp_o_f32,       // [M * n_heads, 512]
+    const float* d_comp_m_f32,       // [M * n_heads]
+    const float* d_comp_l_f32,       // [M * n_heads]
+    const float* d_attn_sink,        // [n_heads]
+    uint16_t* d_out_bf16,            // [M, n_heads, 512]
+    int n_heads, int32_t pos0, int M, hipStream_t stream);
+
+void launch_dsa_gather_kv_f16(
+    const uint16_t* d_mla_kv_bf16, const int32_t* d_sel_indices_BxS,
+    const int32_t* d_sel_counts, uint16_t* d_k_sel_f16,
+    int B, int stride_sel, hipStream_t stream);
+
+void launch_dsa_scores_softmax_sink_f16(
+    const float* d_scores_BxHxL, const float* d_attn_sink,
+    const int32_t* d_sel_counts, uint16_t* d_probs_f16,
+    int B, int n_heads, int L, float scale, hipStream_t stream);
+
+void launch_dsa_q_absorb_uk_f16(
+    const uint16_t* d_q_bf16, const uint16_t* d_kv_b_f16,
+    uint16_t* d_q_abs_bf16, int M, int n_heads, hipStream_t stream);
+
+void launch_dsa_o_project_uv_f16(
+    const uint16_t* d_o_lat_bf16, const uint16_t* d_kv_b_f16,
+    uint16_t* d_o_v_bf16, int M, int n_heads, hipStream_t stream);
+
+// 60-CU direct BF16->FP32 weight-stationary mHC pre-mix GEMM [M, 16384] @ [24, 16384]^T -> [M, 24] F32 (13x faster than SGEMM!)
+void launch_mhc_pre_gemm_bf16_f32(
+    const uint16_t* d_res_bf16, const float* d_fn_24x16384,
+    float* d_out_Mx24, int M, int H, hipStream_t stream);
+
+// Fused HCA [M, 2560] F32 split + BF16-rounded RMSNorm(q_norm, kv_norm) + wkv/wgate copy!
+void launch_hca_split_qkv_comp_norm(
+    const float* d_qkv_f32, const uint16_t* d_q_norm_w, const uint16_t* d_kv_norm_w,
+    uint16_t* d_qr_bf16, uint16_t* d_kv_bf16, float* d_wkv_f32, float* d_wgate_f32,
+    int M, float eps, hipStream_t stream);
+
+// Hardware Batched FP16->FP32 GEMM DSA Dense Causal Attention helpers (pos < 2176, M > 8 -> 15x faster!)
+void launch_dsa_dense_softmax_tile_f32(
+    const float* d_scores_f32, float* d_m_blk_f32, float* d_l_blk_f32, uint16_t* d_probs_f16,
+    int B, int n_heads, int32_t pos0_strip, int k0, int k_tile, float scale, hipStream_t stream);
+
+void launch_dsa_dense_finalize_sink_bf16(
+    const float* d_o_tot_f32, const float* d_m_tot_f32, const float* d_l_tot_f32,
+    const float* d_attn_sink, uint16_t* d_out_bf16,
+    int B, int n_heads, hipStream_t stream);
+
+// ---- Wave-8 FP16 fdot2 mHC Kernels (2x less HBM2 for fn_24x16384!) ----
+void launch_mhc_pre_broadcast_norm_f16(
+    const uint16_t* d_embed_bf16, const uint16_t* d_fn_24x16384_f16,
+    const float* d_hc_scale3, const float* d_hc_base24, const uint16_t* d_norm_w_bf16,
+    uint16_t* d_res_out_bf16, float* d_post_mix, float* d_comb_mix, uint16_t* d_layer_in_bf16,
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+void launch_mhc_pre_norm_fast_f16(
+    const uint16_t* d_res_bf16, const uint16_t* d_fn_24x16384_f16,
+    const float* d_hc_scale3, const float* d_hc_base24, const uint16_t* d_norm_w_bf16,
+    float* d_mhc_ws, float* d_post_mix, float* d_comb_mix, uint16_t* d_layer_in_bf16,
+    int M, int H, float rms_eps, float hc_eps, hipStream_t stream);
+
+void launch_mhc_pre_gemm_bf16_f16_f32(
+    const uint16_t* d_res_bf16, const uint16_t* d_fn_24x16384_f16,
+    float* d_out_Mx24, int M, int H, hipStream_t stream);
+
+// ---- Wave-8 GPU Sparse Softmax + Top-Candidates Compaction (eliminates 805 KiB D2H + 201K CPU exp!) ----
+// Extracts all vocab indices with (logit - max_l)/T > -14.0f (up to max_cands) + exact total sum_exp!
+void launch_gpu_softmax_sparse_top_candidates(
+    const float* d_logits_f32, int V, float temperature,
+    float* d_part64_f32,             // [64] F32 scratch (reuses d_argmax_v64!)
+    float* d_stats2_f32,             // [2] F32 out: [0]=max_l, [1]=total_sum_exp
+    int32_t* d_cand_cnt,             // [1] I32 out: total matching count (if > max_cands, host falls back!)
+    int32_t* d_cand_idx,             // [max_cands] I32 out
+    float* d_cand_exp,               // [max_cands] F32 out: unnormalized exp((l - max_l)/T)
+    int max_cands, hipStream_t stream);
+
+// ---- Wave-8 Zero-Sync Mapped Pinned Host-Memory TP=4 Collectives (M<=8, 0 slc, 0 CPU sync!) ----
+void launch_tp4_mapped_allreduce_bf16(
+    const uint16_t* d_src_local, uint16_t* d_dst_local,
+    uint16_t* d_mapped_slabs, uint32_t* d_mapped_ready, uint32_t* d_mapped_done,
+    int rank, int n_elems, int slab_stride, uint32_t epoch, hipStream_t stream);
+
+void launch_tp4_mapped_allgather_heads_bf16(
+    const uint16_t* d_src_local, uint16_t* d_dst_local,
+    uint16_t* d_mapped_slabs, uint32_t* d_mapped_ready, uint32_t* d_mapped_done,
+    int rank, int slab_elems, int slab_stride, uint32_t epoch, hipStream_t stream);
+
+void launch_tp4_mapped_bcast_bf16(
+    const uint16_t* d_src_local, uint16_t* d_dst_local,
+    uint16_t* d_mapped_slabs, uint32_t* d_mapped_ready, uint32_t* d_mapped_done,
+    int rank, int root_rank, int n_elems, int slab_stride, uint32_t epoch, hipStream_t stream);
+
+} // namespace ernie55

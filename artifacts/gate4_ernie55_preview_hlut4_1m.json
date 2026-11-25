@@ -1,0 +1,33 @@
+{
+  "schema": "ernie55_preview_gate4_v2",
+  "dspark_best_k": 5,
+  "dspark_peak_greedy_tok_s": 27.74,
+  "dspark_peak_prob_tok_s": 24.43,
+  "decode_1m_tok_s": 0.00,
+  "cold_4k_prefill_tok_s": 359.01,
+  "prefill_1m_tok_s": 0.00,
+  "dspark_all_exact": true,
+  "kvblk_262k": {"seq_len": 0, "bytes": 0, "save_ms": 0.00, "restore_ms": 0.00, "restore_gb_s": 0.00, "restore_tok_s": 0, "memcmp_diff_bytes": 0, "bit_exact": false},
+  "kvblk_524k": {"seq_len": 0, "bytes": 0, "save_ms": 0.00, "restore_ms": 0.00, "restore_gb_s": 0.00, "restore_tok_s": 0, "memcmp_diff_bytes": 0, "bit_exact": false},
+  "kvblk_1m": {"seq_len": 65583, "bytes": 603328256, "save_ms": 145.00, "restore_ms": 113.48, "restore_gb_s": 5.32, "restore_tok_s": 577946, "memcmp_diff_bytes": 0, "bit_exact": true},
+  "dspark_greedy_sweep": [
+    {"K": 0, "verify_M": 1, "decode_tok_s": 15.01, "mean_tok_per_step": 1.000, "draft_accept_pct": 0.00, "exact_64": 64, "exact_total": 64},
+    {"K": 2, "verify_M": 3, "decode_tok_s": 25.11, "mean_tok_per_step": 2.385, "draft_accept_pct": 70.13, "exact_64": 64, "exact_total": 64},
+    {"K": 3, "verify_M": 4, "decode_tok_s": 26.90, "mean_tok_per_step": 2.568, "draft_accept_pct": 53.21, "exact_64": 64, "exact_total": 64},
+    {"K": 4, "verify_M": 5, "decode_tok_s": 26.25, "mean_tok_per_step": 2.879, "draft_accept_pct": 49.21, "exact_64": 64, "exact_total": 64},
+    {"K": 5, "verify_M": 6, "decode_tok_s": 27.74, "mean_tok_per_step": 3.065, "draft_accept_pct": 44.14, "exact_64": 64, "exact_total": 64},
+    {"K": 7, "verify_M": 8, "decode_tok_s": 25.27, "mean_tok_per_step": 3.167, "draft_accept_pct": 33.33, "exact_64": 64, "exact_total": 64}
+  ],
+  "dspark_prob_sweep": [
+    {"K": 3, "decode_tok_s": 23.51, "mean_tok_per_step": 2.611, "draft_accept_pct": 54.21},
+    {"K": 5, "decode_tok_s": 24.43, "mean_tok_per_step": 3.167, "draft_accept_pct": 45.45},
+    {"K": 7, "decode_tok_s": 20.62, "mean_tok_per_step": 3.321, "draft_accept_pct": 34.21}
+  ],
+  "ctx_ladder": [
+    {"ctx_len": 2048, "ttft_ms": 5444.7, "prefill_tok_s": 376.1, "decode_tok_s": 29.28, "spec_accepted": 35, "spec_drafted": 64},
+    {"ctx_len": 4096, "ttft_ms": 11409.3, "prefill_tok_s": 359.0, "decode_tok_s": 30.39, "spec_accepted": 36, "spec_drafted": 59},
+    {"ctx_len": 65536, "ttft_ms": 210473.9, "prefill_tok_s": 311.4, "decode_tok_s": 31.41, "spec_accepted": 37, "spec_drafted": 45}
+  ],
+  "wall_s": 298.72,
+  "pass": false
+}
