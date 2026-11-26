@@ -1,0 +1,19 @@
+{
+  "schema": "ernie55_preview_gate2_v1",
+  "num_probes": 64,
+  "probe_len": 64,
+  "eval_positions": 4096,
+  "cal_8gram_overlap": 0,
+  "mean_kl_nats": 0.57704525,
+  "sd_kl_nats": 1.92967206,
+  "median_kl_nats": 0.03914348,
+  "p95_kl_nats": 3.91760021,
+  "max_kl_nats": 25.41993572,
+  "mean_top10_kl_nats": 0.39897771,
+  "top1_agree_pct": 83.9111,
+  "top5_agree_pct": 94.5557,
+  "mean_logit_cos": 0.998706,
+  "sd_logit_cos": 0.002146,
+  "wall_s": 58.45,
+  "pass": false
+}

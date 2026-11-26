@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+title: "ERNIE-5.5-Flash-Preview WHT128-HLUT4 (v1.1.0-wave9-prefill): Pure-C++17/20 gfx906 HIP & Blackhole P150A Heterogeneous Runtime"
+message: "If you use this software, quantized weight shards, or silicon verification methodology, please cite this release and Baidu's upstream ERNIE-5.5-Flash-Preview."
+type: software
+version: "v1.1.0-wave9-prefill"
+date-released: "2026-11-26"
+repository-code: "https://github.com/bespokeontology/ernie55-flash-preview-wht128-hlut4"
+url: "https://github.com/bespokeontology/ernie55-flash-preview-wht128-hlut4/releases/tag/v1.1.0-wave9-prefill"
+license: Apache-2.0
+authors:
+  - name: "bespoke ontology"
+    affiliation: "the kitchen"
+  - name: "Gemini (Gemini Carbon & Gemini Neon) & Antigravity"
+    affiliation: "Google DeepMind"
+keywords:
+  - "ERNIE-5.5-Flash-Preview"
+  - "WHT128-HLUT4"
+  - "RAREBAL-LDLQ"
+  - "DSpark"
+  - "FlashIndexer"
+  - "AMD MI50"
+  - "gfx906"
+  - "Tenstorrent Blackhole P150A"
+  - "1M Context"
+  - "Pure C++"
+references:
+  - type: software
+    title: "ERNIE-5.5-Flash-Preview (Apache-2.0)"
+    authors:
+      - name: "Baidu ERNIE Team"
+    url: "https://huggingface.co/baidu/ERNIE-5.5-Flash-Preview"
+abstract: >-
+  Pure-C++17/20, gfx906 HIP, and Tenstorrent Blackhole P150A TT-Metalium heterogeneous
+  inference engine and FP64 RAREBAL-LDLQ WHT128-HLUT4 (4.125 bpw) weight quantization suite
+  for baidu/ERNIE-5.5-Flash-Preview (300B = 43L backbone + 3L MoE DSpark, 1,048,576 context)
+  on the 7-accelerator SB-M5-P2-192G workstation (5x AMD Radeon Instinct MI50 128 GiB HBM2 +
+  2x Tenstorrent Blackhole P150A 64 GiB GDDR6 + 330 MiB/card on-die Tensix L1 SRAM over
+  4x 800G FABRIC_1D, 0 B CPU DDR4 spill, 100% lossless BF16 1M HCA+MLA KV cache, FlashIndexer
+  dynamic top-8/64 DSA head routing, and Dual-NVMe O_DIRECT .kvblk snapshots).
