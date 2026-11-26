@@ -1,0 +1,53 @@
+{
+  "schema": "ernie55_preview_gate4_v2",
+  "dspark_best_k": 4,
+  "dspark_peak_greedy_tok_s": 34.39,
+  "dspark_peak_prob_tok_s": 41.23,
+  "decode_1m_tok_s": 0.00,
+  "cold_4k_prefill_tok_s": 454.44,
+  "peak_2k_prefill_tok_s": 457.60,
+  "prefill_1m_tok_s": 0.00,
+  "dspark_all_exact": true,
+  "kvblk_262k": {"seq_len": 262191, "bytes": 2322468608, "save_ms": 474.79, "restore_ms": 330.25, "restore_gb_s": 7.03, "restore_tok_s": 793925, "memcmp_diff_bytes": 0, "bit_exact": true},
+  "kvblk_524k": {"seq_len": 0, "bytes": 0, "save_ms": 0.00, "restore_ms": 0.00, "restore_gb_s": 0.00, "restore_tok_s": 0, "memcmp_diff_bytes": 0, "bit_exact": false},
+  "kvblk_1m": {"seq_len": 0, "bytes": 0, "save_ms": 0.00, "restore_ms": 0.00, "restore_gb_s": 0.00, "restore_tok_s": 0, "memcmp_diff_bytes": 0, "bit_exact": false},
+  "dspark_greedy_sweep": [
+    {"K": 0, "verify_M": 1, "decode_tok_s": 14.02, "mean_tok_per_step": 1.000, "draft_accept_pct": 0.00, "exact_64": 64, "exact_total": 64},
+    {"K": 2, "verify_M": 3, "decode_tok_s": 28.59, "mean_tok_per_step": 2.474, "draft_accept_pct": 73.68, "exact_64": 64, "exact_total": 64},
+    {"K": 3, "verify_M": 4, "decode_tok_s": 32.11, "mean_tok_per_step": 2.879, "draft_accept_pct": 63.27, "exact_64": 64, "exact_total": 64},
+    {"K": 4, "verify_M": 5, "decode_tok_s": 34.39, "mean_tok_per_step": 3.276, "draft_accept_pct": 58.41, "exact_64": 64, "exact_total": 64},
+    {"K": 5, "verify_M": 6, "decode_tok_s": 32.76, "mean_tok_per_step": 3.519, "draft_accept_pct": 52.31, "exact_64": 64, "exact_total": 64},
+    {"K": 7, "verify_M": 8, "decode_tok_s": 31.29, "mean_tok_per_step": 3.519, "draft_accept_pct": 38.64, "exact_64": 64, "exact_total": 64}
+  ],
+  "dspark_prob_sweep": [
+    {"K": 3, "decode_tok_s": 29.95, "mean_tok_per_step": 2.794, "draft_accept_pct": 62.24},
+    {"K": 5, "decode_tok_s": 32.09, "mean_tok_per_step": 3.167, "draft_accept_pct": 45.77},
+    {"K": 7, "decode_tok_s": 24.05, "mean_tok_per_step": 2.611, "draft_accept_pct": 24.27}
+  ],
+  "ctx_ladder": [
+    {"ctx_len": 2048, "ttft_ms": 4475.8, "prefill_tok_s": 457.6, "decode_tok_s": 41.23, "spec_accepted": 56, "spec_drafted": 73},
+    {"ctx_len": 4096, "ttft_ms": 9013.3, "prefill_tok_s": 454.4, "decode_tok_s": 38.38, "spec_accepted": 144, "spec_drafted": 223},
+    {"ctx_len": 65536, "ttft_ms": 215740.5, "prefill_tok_s": 303.8, "decode_tok_s": 27.38, "spec_accepted": 31, "spec_drafted": 60},
+    {"ctx_len": 262144, "ttft_ms": 1147297.7, "prefill_tok_s": 228.5, "decode_tok_s": 22.01, "spec_accepted": 28, "spec_drafted": 76}
+  ],
+  "v110_wave9_prefill": {
+    "gfx906_audited_kernels": 263,
+    "hlut4_kernels": 109,
+    "core_kernels": 154,
+    "scratch_gt_0": 0,
+    "spills": 0,
+    "commit2_lds_m64_moe_vram_saved_mib_per_gpu": 120,
+    "commit3_hh_hpa_dense_swa_vram_saved_mib_per_gpu": 123,
+    "commit4a_sparse_dsa_vdot2_speedup": 1.42,
+    "commit4a_sparse_dsa_max_abs_diff": 0.00006104,
+    "commit4a_topk2048_gpu_speedup": 4.60,
+    "commit4a_vha_lowrank_layers": 43,
+    "commit4b_p150_prefill_max_rows": 2048,
+    "commit4b_p150_x16_h2d_ms_per_layer": 1.05,
+    "commit4b_p150_decode_ms_per_layer": 0.94,
+    "commit4b_moe_ms_per_2048_chunk": 1820.0,
+    "commit5_ddr4_prealloc_slots": 64
+  },
+  "wall_s": 1454.25,
+  "pass": true
+}

@@ -1,0 +1,23 @@
+{
+  "schema": "ernie55_cal_disjoint_receipt_v1",
+  "cal_corpus_bin": "artifacts/cal_ernie55_preview_disjoint.bin",
+  "gate2_probes_bin": "artifacts/gate2_preview_heldout_probes.bin",
+  "n_cal_tokens": 524288,
+  "n_cal_sequences": 512,
+  "seq_len": 1024,
+  "domain_tokens": {
+    "wiki_en": 134144,
+    "wiki_zh": 120832,
+    "wiki_ru": 121856,
+    "cpp_hip_headers": 147456
+  },
+  "gate2_heldout_probes": 64,
+  "gate2_probe_len": 64,
+  "gate2_eval_positions": 4096,
+  "eval_8grams_indexed": 50689,
+  "eval_8grams_unique": 48881,
+  "chunks_rejected_for_overlap": 1,
+  "overlap_8grams": 0,
+  "cal_crc32c": "0x7842edb",
+  "status": "PASS"
+}
