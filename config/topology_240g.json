@@ -1,0 +1,19 @@
+{
+  "name": "SB-M6-P3-240G-ERNIE55-PREVIEW-HLUT4",
+  "total_vram_gib": 240,
+  "ddr4_expert_spill_bytes": 0,
+  "hip_visible_devices": "0,2,3,1,4,5",
+  "mi50_tp_ranks": [
+    { "tp_rank": 0, "hip_dev": 0, "bdf": "0000:c7:00.0", "hbm_mib": 32752, "expert_begin": 0,  "expert_end": 44 },
+    { "tp_rank": 1, "hip_dev": 1, "bdf": "0000:88:00.0", "hbm_mib": 32752, "expert_begin": 44, "expert_end": 88 }
+  ],
+  "mi50_ep_workers": [
+    { "ep_id": 0, "hip_dev": 2, "bdf": "0000:05:00.0", "hbm_mib": 32752, "cpu_core": 22, "expert_begin": 88,  "expert_end": 176, "echo_begin": 0, "echo_end": 0 },
+    { "ep_id": 1, "hip_dev": 3, "bdf": "0000:85:00.0", "hbm_mib": 16368, "cpu_core": 24, "expert_begin": 176, "expert_end": 222, "echo_begin": 0, "echo_end": 0 },
+    { "ep_id": 2, "hip_dev": 4, "bdf": "0000:08:00.0", "hbm_mib": 16368, "cpu_core": 26, "expert_begin": 222, "expert_end": 268, "echo_begin": 0, "echo_end": 0 },
+    { "ep_id": 3, "hip_dev": 5, "bdf": "0000:auto",    "hbm_mib": 16368, "cpu_core": 28, "expert_begin": 268, "expert_end": 314, "echo_begin": 0, "echo_end": 0 }
+  ],
+  "p150_groups": [
+    { "group_id": 0, "mode": "ep3", "num_cards": 3, "shm_name": "/ernie55_p150_ipc", "cpu_cores": "25,27,29", "expert_begin": 314, "expert_end": 512, "card_splits": [66, 66, 66], "trace_region_mib": 256 }
+  ]
+}

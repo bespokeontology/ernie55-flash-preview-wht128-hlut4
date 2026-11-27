@@ -1,0 +1,43 @@
+cff-version: 1.2.0
+title: "ERNIE-5.5-Flash-Preview WHT128-HLUT4 (v1.4.0-wave12-1m-apex): Pure-C++17/20 gfx906 HIP & Blackhole P150A Heterogeneous Runtime"
+message: "If you use this software, quantized weight shards, or silicon verification methodology, please cite this release and Baidu's upstream ERNIE-5.5-Flash-Preview."
+type: software
+version: "v1.4.0-wave12-1m-apex"
+date-released: "2026-11-27"
+repository-code: "https://github.com/bespokeontology/ernie55-flash-preview-wht128-hlut4"
+url: "https://github.com/bespokeontology/ernie55-flash-preview-wht128-hlut4/releases/tag/v1.4.0-wave12-1m-apex"
+license: Apache-2.0
+authors:
+  - name: "bespoke ontology"
+    affiliation: "the kitchen"
+  - name: "Gemini (Gemini Carbon & Gemini Neon) & Antigravity"
+    affiliation: "Google DeepMind"
+keywords:
+  - "ERNIE-5.5-Flash-Preview"
+  - "WHT128-HLUT4"
+  - "RAREBAL-LDLQ"
+  - "DSpark"
+  - "DSpark+SA"
+  - "FlashIndexer"
+  - "AMD MI50"
+  - "gfx906"
+  - "Tenstorrent Blackhole P150A"
+  - "1M Context"
+  - "Pure C++"
+references:
+  - type: software
+    title: "ERNIE-5.5-Flash-Preview (Apache-2.0)"
+    authors:
+      - name: "Baidu ERNIE Team"
+    url: "https://huggingface.co/baidu/ERNIE-5.5-Flash-Preview"
+abstract: >-
+  Pure-C++17/20, gfx906 HIP, and Tenstorrent Blackhole P150A TT-Metalium heterogeneous
+  inference engine and FP64 RAREBAL-LDLQ WHT128-HLUT4 (4.125 bpw) weight quantization suite
+  for baidu/ERNIE-5.5-Flash-Preview (300B = 43L backbone + 3L MoE DSpark+SA, 1,048,576 context)
+  on the 7-accelerator SB-M5-P2-192G workstation (5x AMD Radeon Instinct MI50 128 GiB HBM2 with
+  4/5 MI50s — all 4/4 TP4/VHA/1M KV ranks and all 3/3 32 GiB cards — at 16.0 GT/s PCIe x16 and
+  card4 16 GiB MoE-only worker + Wayland renderD131 on Switchbox #2 Slot #0 at 8.0 GT/s PCIe x16,
+  42.77 GB/s ALL-5 H2D + 2x Tenstorrent Blackhole P150A 64 GiB GDDR6 with kBatchSlots=128 +
+  253.7 MiB on-die Tensix L1 SRAM over 4x 800G FABRIC_1D, AMD EPYC 7542 host, 0 B CPU DDR4 spill,
+  100% lossless BF16 1M HCA+MLA KV cache, 512-slot DDR4 + Dual-NVMe O_DIRECT .kvblk snapshots,
+  sub-2 ms ChatPrefixCache JSON delta, M-fused HCA split-K, and zero-VRAM 8/6-gram DSpark+SA).

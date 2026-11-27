@@ -1,0 +1,13 @@
+build/
+bin/
+checkpoints/
+kvcache/
+logs/
+backups/
+gh_release_stage/
+release_github_staging/
+release_hf_staging/
+FREEZE_*/
+*.bin
+*.safetensors
+*.kvblk
