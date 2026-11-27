@@ -1,0 +1,54 @@
+{
+  "schema": "ernie55_baseline_targets_v1",
+  "generated_at": "2026-11-24T03:28:00-05:00",
+  "station_id": "SB-M5-P2-192G",
+  "target_model": "baidu/ERNIE-5.5-Flash-Preview-BF16",
+  "target_license": "Apache-2.0",
+  "baselines": {
+    "hy4_flash_wht128_hlut4": {
+      "freeze_path": "/data/hy4-flash-20261121/FREEZE_HY4_HLUT4_192G_20261122",
+      "spc_mean_sqnr_db": 17.934,
+      "full_vocab_kld_nats": 7.76e-6,
+      "heldout_top10_kl_nats": 6.47e-6,
+      "ear_at_10_pct": 100.0,
+      "p150a_selftest_m1_cos": 0.999989,
+      "cold_4k_prefill_tok_s": 1600.0,
+      "raw_m1_decode_peak_tok_s": 53.30,
+      "live_decode_tok_s": 47.86,
+      "t1_cpp_code_peak_tok_s": 91.6,
+      "kvblk_cold_restore_262k_tok_s": 1070446.0,
+      "kvblk_cold_restore_780k_tok_s": 1133082.0
+    },
+    "dsv41_wave10_192g": {
+      "freeze_path": "/data/dsv41-hlut2-20261111/FREEZE_WAVE10_192G_20261121",
+      "cold_4k_prefill_tok_s_range": [923.0, 960.0],
+      "decode_tok_s_range": [47.58, 53.08],
+      "kvblk_cold_restore_e2e_tok_s": 467800.0,
+      "kvblk_cold_restore_raw_tok_s": 2180000.0
+    },
+    "hy4_770b_profile_a5": {
+      "freeze_path": "/data/hy4-770b-20261122/FREEZE_HY4_770B_192G_20261122",
+      "gate2_mean_kl_nats": 0.055777,
+      "gate2_top1_agree_pct": 95.3125,
+      "gate2_mean_logit_cos": 0.983285,
+      "gate2_cal_8gram_overlap": 0
+    }
+  },
+  "ernie55_hard_gates": {
+    "gate1_lossless_op_cos_min": 0.999999,
+    "gate1_cross_silicon_hlut4_cos_min": 0.99999,
+    "gate1_gemv_vs_hgemm_cos_min": 0.99999,
+    "gate2_mean_kl_nats_max": 0.045,
+    "gate2_mean_kl_nats_stretch": 0.025,
+    "gate2_top1_agree_pct_min": 95.5,
+    "gate2_mean_logit_cos_min": 0.990,
+    "gate3_1m_needle_min": "18/18",
+    "gate4_decode_dspark_tok_s_min": 48.0,
+    "gate4_decode_dspark_tok_s_stretch": [65.0, 110.0],
+    "gate4_cold_4k_prefill_tok_s_min": 950.0,
+    "gate4_cold_4k_prefill_tok_s_stretch": 1600.0,
+    "gate4_kvblk_cold_restore_e2e_tok_s_min": 500000.0,
+    "gate4_kvblk_cold_restore_1m_sec_max": 2.0,
+    "gate4_dspark_vs_m1_exact_parity": "64/64"
+  }
+}
