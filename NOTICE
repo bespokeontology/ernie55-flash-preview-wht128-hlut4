@@ -1,0 +1,28 @@
+ERNIE-5.5-Flash-Preview WHT128-HLUT4 Inference Engine & Quantized Weights
+Release: v1.6.0-wave14-512g-8ch (Wave-14 512 GiB 8-Channel + Persistent /dev/shm 2M .kvblk Arena, 344/344 zero-scratch gfx906 kernels, 49/49 Gate-0 unit suites)
+SPDX-License-Identifier: Apache-2.0
+Copyright 2026 bespoke ontology (the kitchen)
+
+Licensed under the Apache License, Version 2.0 (the "License").
+
+This product includes software, configuration, tokenizer assets, and quantized
+model weights derived from baidu/ERNIE-5.5-Flash-Preview-BF16 and
+baidu/vLLM-ERNIE:
+  Copyright 2026 Baidu, Inc. All Rights Reserved.
+  Licensed under the Apache License, Version 2.0.
+
+Co-authorship Attribution:
+  Engine architecture, pure-C++17/C++20 runtime, gfx906 HIP and Tenstorrent
+  Blackhole P150A kernels, and silicon verification suite co-authored by
+  bespoke ontology (the kitchen) and Google DeepMind / Gemini
+  (Gemini Carbon & Gemini Neon) & Antigravity.
+
+Modification Notice (Apache License, Version 2.0, Section 4(b)):
+  All 45 MoE layers (42 backbone LatentMoE layers L01..L42 + 3 bundled MoE
+  DSpark draft layers L43..L45 = 23,040 routed experts) of
+  baidu/ERNIE-5.5-Flash-Preview-BF16 were quantized to WHT128-HLUT4 (4.125 bpw)
+  using FP64 RAREBAL-LDLQ causal reverse-Cholesky error feedback over 524,288
+  strictly 8-gram-disjoint calibration tokens. All non-expert spine tensors
+  (embeddings, L00 dense FFN, 37 HCA layers, 6 MLA+DSA layers, FlashIndexer
+  head routers, mHC mappings, routers, shared experts, MultiMax head, and
+  DSpark spine projections) were repacked lossless in BF16/FP32.

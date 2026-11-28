@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+title: "ERNIE-5.5-Flash-Preview WHT128-HLUT4 (v1.6.0-wave14-512g-8ch): Pure-C++17/20 gfx906 HIP & Blackhole P150A Heterogeneous Runtime"
+message: "If you use this software, quantized weight shards, or silicon verification methodology, please cite this release and Baidu's upstream ERNIE-5.5-Flash-Preview."
+type: software
+version: "v1.6.0-wave14-512g-8ch"
+date-released: "2026-11-28"
+repository-code: "https://github.com/bespokeontology/ernie55-flash-preview-wht128-hlut4"
+url: "https://github.com/bespokeontology/ernie55-flash-preview-wht128-hlut4/releases/tag/v1.6.0-wave14-512g-8ch"
+license: Apache-2.0
+authors:
+  - name: "bespoke ontology"
+    affiliation: "the kitchen"
+  - name: "Gemini (Gemini Carbon & Gemini Neon) & Antigravity"
+    affiliation: "Google DeepMind"
+keywords:
+  - "ERNIE-5.5-Flash-Preview"
+  - "WHT128-HLUT4"
+  - "RAREBAL-LDLQ"
+  - "DSpark"
+  - "DSpark+SA"
+  - "FlashIndexer"
+  - "AMD MI50"
+  - "gfx906"
+  - "Tenstorrent Blackhole P150A"
+  - "1M Context"
+  - "1M Prefill"
+  - "Persistent SHM kvblk Arena"
+  - "8-Channel DDR4"
+  - "Pure C++"
+references:
+  - type: software
+    title: "ERNIE-5.5-Flash-Preview (Apache-2.0)"
+    authors:
+      - name: "Baidu ERNIE Team"
+    url: "https://huggingface.co/baidu/ERNIE-5.5-Flash-Preview"
+abstract: >-
+  Pure-C++17/20, gfx906 HIP, and Tenstorrent Blackhole P150A TT-Metalium heterogeneous
+  inference engine and FP64 RAREBAL-LDLQ WHT128-HLUT4 (4.125 bpw) weight quantization suite
+  for baidu/ERNIE-5.5-Flash-Preview (300B = 43L backbone + 3L MoE DSpark+SA, 1,048,576 context)
+  on the 7-accelerator SB-M5-P2-192G workstation (AMD EPYC 7542 host with 512 GiB 8-channel
+  3200 MT/s ECC DDR4 under D18F0x110=0x0000003B hashed interleave, 68.07 GB/s ALL-5 H2D and
+  64.06 GB/s D2H; 5x AMD Radeon Instinct MI50 128 GiB HBM2 + 2x Tenstorrent Blackhole P150A
+  64 GiB GDDR6 with kBatchSlots=256 + 253.7 MiB on-die Tensix L1 SRAM over 4x 800G FABRIC_1D;
+  0 B CPU DDR4 expert spill, 100% lossless BF16 1M HCA+MLA KV cache, adaptive kTileK=32,768
+  FlashIndexer, persistent 1,024-slot 46.16 GiB /dev/shm Tier-1 DDR4 .kvblk arena at 5.50M and
+  5.26M tok/s live hot-swap restore, cooled 5-card minimax cost_w, 17-term M-fused HCA split-K,
+  zero-VRAM 8/6-gram DSpark+SA, 344/344 zero-scratch gfx906 kernels, and 49/49 Gate-0 suites).
