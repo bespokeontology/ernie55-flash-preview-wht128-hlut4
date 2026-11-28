@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: Apache-2.0
+// Blackhole P150A ERNIE-5.5 Expert-Compact K-Split + Scatter-Accumulate Writer (RISCV_0 / NOC_1 across 64 cores)
+
+#include "api/dataflow/dataflow_api.h"
+
+void kernel_main() {
+    const uint32_t y_accum_addr   = get_arg_val<uint32_t>(0);
+    const uint32_t slot_meta_addr = get_arg_val<uint32_t>(1);
+    const uint32_t slot_start     = get_arg_val<uint32_t>(2);
+    const uint32_t core_i         = get_arg_val<uint32_t>(3);  // 0..63
+    const uint32_t batch_cnt      = get_arg_val<uint32_t>(4);  // 1..32
+
+    constexpr auto y_args = TensorAccessorArgs<0>();
+    constexpr auto m_args = TensorAccessorArgs<y_args.next_compile_time_args_offset(), y_args.next_common_runtime_args_offset()>();
+
+    const auto y_acc    = TensorAccessor(y_args, y_accum_addr, 4096);
+    const auto meta_acc = TensorAccessor(m_args, slot_meta_addr, 256);
+
+    cb_reserve_back(6, 1);
+    const uint32_t meta_base   = get_write_ptr(6);
+    // Wave-13 Cut W13.4a: 256 * 128 B = 32,768 B metadata arena for kBatchSlots = 256
+    // (total CB 6 = 32,768 + 2 * 4,096 scatter = 40,960 B).
+    const uint32_t scatter0_l1 = meta_base + 32768u;
+    const uint32_t scatter1_l1 = meta_base + 36864u;
+    const uint32_t page_grp    = core_i >> 5;
+    const uint32_t byte_off    = (core_i & 31u) * 128u;
+
+    for (uint32_t b = 0u; b < batch_cnt; ++b) {
+        noc_async_read(meta_acc.get_noc_addr(slot_start + b, 0), meta_base + b * 128u, 128u);
+    }
+    if (batch_cnt > 0u) noc_async_read_barrier();
+
+    for (uint32_t b = 0u; b < batch_cnt; ++b) {
+        const uint32_t meta_l1 = meta_base + b * 128u;
+        const volatile uint32_t* meta_u32 = reinterpret_cast<const volatile uint32_t*>(meta_l1);
+        uint32_t cnt = meta_u32[0];
+        if (cnt > 32u) cnt = 32u;
+        const volatile uint16_t* row_idx = reinterpret_cast<const volatile uint16_t*>(meta_l1 + 8u);
+        const uint32_t scatter_l1 = (b & 1u) ? scatter1_l1 : scatter0_l1;
+
+        cb_wait_front(16, 1);
+        if (cnt > 0u) {
+            if (b >= 2u) noc_async_writes_flushed();
+            const uint64_t* tile0 = reinterpret_cast<const uint64_t*>(get_read_ptr(16));
+
+            for (uint32_t r = 0u; r < cnt; ++r) {
+                uint64_t* row_out = reinterpret_cast<uint64_t*>(scatter_l1 + r * 128u);
+                const uint32_t f_base = ((r >= 16u) ? 256u : 0u) + (r & 15u) * 8u;
+                #pragma GCC unroll 8
+                for (uint32_t c = 0u; c < 8u; ++c) {
+                    row_out[0u + c] = tile0[f_base + c];
+                    row_out[8u + c] = tile0[f_base + 128u + c];
+                }
+                const uint32_t dst_row = row_idx[r];
+                noc_async_write(scatter_l1 + r * 128u, y_acc.get_noc_addr(dst_row * 2u + page_grp, byte_off), 128u);
+            }
+        }
+        cb_pop_front(16, 1);
+
+        if (b + 1u < batch_cnt) {
+            // Wave-13 Cut W13.4a: meta[1] bit 1 is is_first_wave, so only bit 0 drives the
+            // write barrier.
+            const uint32_t next_wait = reinterpret_cast<const volatile uint32_t*>(meta_base + (b + 1u) * 128u)[1] & 1u;
+            if (next_wait != 0u) {
+                noc_async_write_barrier();
+            }
+            cb_reserve_back(7, 1);
+            cb_push_back(7, 1);
+        }
+    }
+    noc_async_write_barrier();
+}
